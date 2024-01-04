@@ -1,5 +1,18 @@
-import streamlit
+import streamlit as st
 from streamlit_agraph import agraph, Node, Edge, Config
+from neo4j import GraphDatabase
+
+uri = "bolt://localhost:7687"  # Replace with your Neo4j server URI
+username = "neo4j"
+password = "password"
+
+
+query = 'match (u)<-[e]->(v) return u,e,v limit 300'
+with GraphDatabase.driver(uri, auth=(username, password)) as driver:
+       records, summary_obj, key_list = driver.execute_query(query)
+       # for node in nodes:
+st.write(records)
+
 
 nodes = []
 edges = []
