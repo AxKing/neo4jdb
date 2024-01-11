@@ -3,6 +3,7 @@ import json
 from streamlit_agraph import agraph, Node, Edge, Config
 from neo4j import GraphDatabase
 import pandas as pd
+import datetime
 
 uri = "bolt://localhost:7687"  # Replace with your Neo4j server URI
 username = "neo4j"
@@ -23,12 +24,30 @@ def doc_by_entity(entity):
 
 def doc_in_date_range(entity, date1, date2):
     yr1, m1, d1 = date1.split('-')
+    yr1, m1, d1 = int(yr1), int(m1), int(d1)
     yr2, m2, d2 = date2.split('-')
+    yr2, m2, d2 = int(yr2), int(m2), int(d2)
     query = f"""
     MATCH (e:Entity {{name: '{entity}'}})<-[:mentions]-(s:Snippet)-[:was_found_in]->(d:Document) 
     WHERE d.date >= date({{year:{yr1}, month:{m1}, day:{d1}}})
     AND d.date <= date({{year:{yr2},month:{m2},day:{d1}}})
     RETURN DISTINCT d;"""
+    with GraphDatabase.driver(uri, auth=(username, password)) as driver:
+        records, summary_obj, key_list = driver.execute_query(query)
+    return records
+
+def cat_by_entity(entity):
+    query = f"""
+    MATCH (e:Entity {{name: '{entity}'}})<-[:mentions]-(s:Snippet) -[:relates_to]->(c:Category)
+        RETURN DISTINCT c"""
+    with GraphDatabase.driver(uri, auth=(username, password)) as driver:
+        records, summary_obj, key_list = driver.execute_query(query)
+    return records
+
+def entities_by_doc(document):
+    query = f"""
+    MATCH(d:Document {{name: '{document}'}}) <-[:was_found_in]-(s:Snippet)<-[:mentions]->(e:Entity)
+        RETURN DISTINCT e"""
     with GraphDatabase.driver(uri, auth=(username, password)) as driver:
         records, summary_obj, key_list = driver.execute_query(query)
     return records
@@ -41,7 +60,10 @@ query_selection = st.selectbox(
        'List all Document Nodes', 
        'List all Entity Nodes', 
        'List all Category Nodes', 
-       'Pick an entity and see their documents', 
+       'Pick an Entity and see their documents',
+       'Pick an Entity and a date range, and return documents that mention them',
+       'Pick an Entity and see what categories they have been related to',
+       'Select a Document and see the Entities it mentions', 
        'Test Query')
 )
 if query_selection == 'List all Document Nodes':
@@ -75,7 +97,7 @@ if query_selection == 'List all Category Nodes':
        df = pd.DataFrame(columns=['name'], data=data)
        st.write(df)
 
-if query_selection == "Pick an entity and see their documents":
+if query_selection == 'Pick an Entity and see their documents':
        data = ['Select Entity']
        ent_records = get_basic_nodes('Entity')
        for record in ent_records:
@@ -84,7 +106,7 @@ if query_selection == "Pick an entity and see their documents":
        data = tuple(data)
        
        query_selection = st.selectbox(
-       'Please select the Query you\'d like to run...',
+       'Please select the Entity:',
        data
        )
        if query_selection != 'Select Entity':
@@ -94,111 +116,78 @@ if query_selection == "Pick an entity and see their documents":
               data = []
               for record in docs:
                      node = record['d']
-                     data.append({"name": node['name'],
+                     data.append({"doc name": node['name'],
                             "url": node['url'],
                             'date': node['date']})
-              df = pd.DataFrame(columns=['name', 'url', 'date'], data=data)
+              df = pd.DataFrame(columns=['doc name', 'url', 'date'], data=data)
               st.write(df)
 
 
-if query_selection == 'Pick and Entity and a date range, return documents':
-# Given an Entity and a date range, return all documents
-# Requires entity name, and two dates.
-# date1 < date2
+if query_selection == 'Pick an Entity and a date range, and return documents that mention them':
        data = ['Select Entity']
        ent_records = get_basic_nodes('Entity')
        for record in ent_records:
               node = record['n']
               data.append(node['name'])
        data = tuple(data)
+       
+       query_selection = st.selectbox(
+       'Please select the Entity:', data
+       )
+       if query_selection != 'Select Entity':
+              date1 = st.date_input("Show articles from:", datetime.date(1995, 3, 20))
+              date2 = st.date_input("through:", datetime.date(2023, 7, 18))
+              date1, date2 = str(date1), str(date2)
+              docs = doc_in_date_range(query_selection, date1, date2)
+              data = []
+              for record in docs:
+                     node = record['d']
+                     data.append({"article name": node['name'],
+                            "url": node['url'],
+                            'date': node['date']})
+              df = pd.DataFrame(columns=['article name', 'url', 'date'], data=data)
+              st.write(df)
 
 
 
-# Example
-entity = 'FDA'
-date1 = '2020-2-15'
-date2 = '2023-12-31'
-docs = doc_in_date_range(entity, date1, date2)
-for doc in docs:
-    node = doc['d']
-    print(node['name'], node['url'])
+if query_selection == 'Pick an Entity and see what categories they have been related to':
+       data = ['Select Entity']
+       ent_records = get_basic_nodes('Entity')
+       for record in ent_records:
+              node = record['n']
+              data.append(node['name'])
+       data = tuple(data)
+       
+       query_selection = st.selectbox(
+       'Please select the Entity:', data
+       )
+       if query_selection != 'Select Entity':
+              docs = cat_by_entity(query_selection)
+              data = []
+              for record in docs:
+                     node = record['c']
+                     data.append({"category name": node['name']})
+              df = pd.DataFrame(columns=['category name'], data=data)
+              st.write(df)
 
 
-
-
-
-
-
-
-
-if query_selection == 'Test Query':
-       query = 'match (u)<-[e]-(v) return u,e,v limit 10'
-       with GraphDatabase.driver(uri, auth=(username, password)) as driver:
-              records, summary_obj, key_list = driver.execute_query(query)
-              used_node_ids = set()
-              nodes = []
-              edges = []
-              # st.write(records)
-              for u, e, v in records:
-                     # st.write(e)
-                     st.write("u:", u,"e:", e,"v:", v)
-                     if u.element_id not in used_node_ids:
-                            used_node_ids.add(u.element_id)
-                            nodes.append( Node(id=u.element_id, 
-                                   size=25,
-                                   label = list(u.labels)[0],
-                                   shape="circle",
-                                   ))
-                     if v.element_id not in used_node_ids:
-                            used_node_ids.add(v.element_id)
-                            nodes.append( Node(id=v.element_id, 
-                                   size=25, 
-                                   shape="circle",
-                                   ))
-                     edges.append( Edge(source=v.element_id, 
-                     label=e.type, 
-                     target=u.element_id, 
-                     # **kwargs
-                   ) 
-            )
-              config = Config(width=750,
-                height=950,
-                directed=True, 
-                physics=True, 
-                hierarchical=False,
-                # **kwargs
-                )
-
-              return_value = agraph(nodes=nodes, 
-                      edges=edges, 
-                      config=config)
-# <Relationship element_id='5:7191aa7a-6f49-473d-8f94-a87c74fc2fc7:4' 
-# nodes=(
-# <Node element_id='4:7191aa7a-6f49-473d-8f94-a87c74fc2fc7:61' 
-#      labels=frozenset({'Snippet'})  
-#      properties={'text': 'Nibh praesent tristique magna sit. Porttitor leo a diam sollicitudin tempor id eu nisl. Varius vel pharetra vel turpis nunc eget lorem.'}>, 
-# <Node element_id='4:7191aa7a-6f49-473d-8f94-a87c74fc2fc7:59' 
-# labels=frozenset({'Entity'}) properties={'name': 'Eco Nest Homes'}>) 
-# type='mentions' properties={}>
-
-
-
-
-# nodes.append( Node(id="Captain_Marvel", 
-#                    size=25,
-#                    shape="circularImage",
-#                    image="http://marvel-force-chart.surge.sh/marvel_force_chart_img/top_captainmarvel.png") 
-#             )
-
-
-# config = Config(width=750,
-#                 height=950,
-#                 directed=True, 
-#                 physics=True, 
-#                 hierarchical=False,
-#                 # **kwargs
-#                 )
-
-# return_value = agraph(nodes=nodes, 
-#                       edges=edges, 
-#                       config=config)
+if query_selection == 'Select a Document and see the Entities it mentions':
+       data = ['Select Document']
+       ent_records = get_basic_nodes('Document')
+       for record in ent_records:
+              node = record['n']
+              data.append(node['name'])
+       data = tuple(data)
+       
+       query_selection = st.selectbox(
+       'Please select a Document:', data
+       )
+       if query_selection != 'Select Document':
+              docs = entities_by_doc(query_selection)
+              data = []
+              for record in docs:
+                     node = record['e']
+                     data.append(node['name'])
+              df = pd.DataFrame(columns=['Mentioned Entities'], data=data)
+              st.write(df)
+              
